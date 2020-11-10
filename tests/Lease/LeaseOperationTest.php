@@ -135,6 +135,137 @@ class LeaseOperationTest extends TestCase
         // -- Assert
         $this->assertEmpty($response->getErrors());
         $this->assertInstanceOf(LeaseContract::class, $response->getLeaseContract());
-        $this->assertEquals(40, $response->getLeaseContract()->price);
+        $this->assertEquals(40, $response->getLeaseContract()->getPrice());
+    }
+
+    /**
+     * Переработка
+     */
+    public function test_idleSlave_failedOverlimitLeased ()
+    {
+        // -- Arrange
+        {
+            // Хозяева
+            $master1    = new Master(1, 'Господин Боб');
+            $masterRepo = $this->makeFakeMasterRepository($master1);
+
+            // Раб
+            $slave1    = new Slave(1, 'Уродливый Фред', 20);
+            $slaveRepo = $this->makeFakeSlaveRepository($slave1);
+
+            $contractsRepo = $this->prophesize(LeaseContractsRepository::class);
+            $contractsRepo
+                ->getForSlave($slave1->getId(), '2017-01-01', '2017-01-03')
+                ->willReturn([]);
+
+            // Запрос на новую аренду
+            $leaseRequest           = new LeaseRequest();
+            $leaseRequest->masterId = $master1->getId();
+            $leaseRequest->slaveId  = $slave1->getId();
+            $leaseRequest->timeFrom = '2017-01-01 01:30:00';
+            $leaseRequest->timeTo   = '2017-01-03 22:01:00';
+
+            // Операция аренды
+            $leaseOperation = new LeaseOperation($contractsRepo->reveal(), $masterRepo, $slaveRepo);
+        }
+
+        // -- Act
+        $response = $leaseOperation->run($leaseRequest);
+
+        // -- Assert
+        $expectedErrors = ['Ошибка. Раб #1 "Уродливый Фред" не может работать больше 16 часов в день. Перегруженные дни: "2017-01-01", "2017-01-03"'];
+
+        $this->assertArraySubset($expectedErrors, $response->getErrors());
+        $this->assertNull($response->getLeaseContract());
+    }
+
+    /**
+     * Если раб бездельничает, то его легко можно арендовать на несколько дней
+     */
+    public function test_idleSlave_successfullyLeasedOnFewDays ()
+    {
+        // -- Arrange
+        {
+            // Хозяева
+            $master1    = new Master(1, 'Господин Боб');
+            $masterRepo = $this->makeFakeMasterRepository($master1);
+
+            // Раб
+            $slave1    = new Slave(1, 'Уродливый Фред', 20);
+            $slaveRepo = $this->makeFakeSlaveRepository($slave1);
+
+            $contractsRepo = $this->prophesize(LeaseContractsRepository::class);
+            $contractsRepo
+                ->getForSlave($slave1->getId(), '2017-01-01', '2017-01-02')
+                ->willReturn([]);
+
+            // Запрос на новую аренду
+            $leaseRequest           = new LeaseRequest();
+            $leaseRequest->masterId = $master1->getId();
+            $leaseRequest->slaveId  = $slave1->getId();
+            $leaseRequest->timeFrom = '2017-01-01 00:01:00';
+            $leaseRequest->timeTo   = '2017-01-02 01:01:00';
+
+            // Операция аренды
+            $leaseOperation = new LeaseOperation($contractsRepo->reveal(), $masterRepo, $slaveRepo);
+        }
+
+        // -- Act
+        $response = $leaseOperation->run($leaseRequest);
+
+        // -- Assert
+        $this->assertEmpty($response->getErrors());
+        $this->assertInstanceOf(LeaseContract::class, $response->getLeaseContract());
+        $this->assertEquals(360, $response->getLeaseContract()->getPrice());
+    }
+
+    /**
+     * Если раб занят, то арендовать его не получится, только если ты не VIP
+     */
+    public function test_periodIsBusy_failedWithOverlapInfoExceptVIP()
+    {
+        // -- Arrange
+        {
+            // Хозяева
+            $master1    = new Master(1, 'Господин Боб');
+            $master2    = new Master(2, 'сэр Вонючка', true);
+            $masterRepo = $this->makeFakeMasterRepository($master1, $master2);
+
+            // Раб
+            $slave1    = new Slave(1, 'Уродливый Фред', 20);
+            $slaveRepo = $this->makeFakeSlaveRepository($slave1);
+
+            // Договор аренды. 1й хозяин арендовал раба
+            $leaseContract1 = new LeaseContract($master1, $slave1, 80, [
+                new LeaseHour('2017-01-01 00'),
+                new LeaseHour('2017-01-01 01'),
+                new LeaseHour('2017-01-01 02'),
+                new LeaseHour('2017-01-01 03'),
+            ]);
+
+            // Stub репозитория договоров
+            $contractsRepo = $this->prophesize(LeaseContractsRepository::class);
+            $contractsRepo
+                ->getForSlave($slave1->getId(), '2017-01-01', '2017-01-01')
+                ->willReturn([$leaseContract1]);
+
+            // Запрос на новую аренду. 2й хозяин выбрал занятое время
+            $leaseRequest           = new LeaseRequest();
+            $leaseRequest->masterId = $master2->getId();
+            $leaseRequest->slaveId  = $slave1->getId();
+            $leaseRequest->timeFrom = '2017-01-01 01:30:00';
+            $leaseRequest->timeTo   = '2017-01-01 02:01:00';
+
+            // Операция аренды
+            $leaseOperation = new LeaseOperation($contractsRepo->reveal(), $masterRepo, $slaveRepo);
+        }
+
+        // -- Act
+        $response = $leaseOperation->run($leaseRequest);
+
+        // -- Assert
+        $this->assertEmpty($response->getErrors());
+        $this->assertInstanceOf(LeaseContract::class, $response->getLeaseContract());
+        $this->assertEquals(40, $response->getLeaseContract()->getPrice());
     }
 }

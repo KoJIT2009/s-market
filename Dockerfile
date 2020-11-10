@@ -12,7 +12,8 @@ RUN pecl install xdebug-2.5.5 \
 # ZIP
 RUN apt-get install -y \
         zlib1g-dev \
-    && docker-php-ext-install zip
+    && docker-php-ext-install zip \
+    && docker-php-ext-install bcmath
 
 # Composer
 RUN php -r "readfile('https://getcomposer.org/installer');" | php -- --install-dir=/usr/local/bin --filename=composer
